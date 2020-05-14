@@ -326,6 +326,94 @@ func (a adminAPIHandlers) DataUsageInfoHandler(w http.ResponseWriter, r *http.Re
 	writeSuccessResponseJSON(w, dataUsageInfoJSON)
 }
 
+func (a adminAPIHandlers) AccountUsageInfoHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := newContext(r, w, "AccountUsageInfo")
+
+	defer logger.AuditLog(w, r, "AccountUsageInfo", mustGetClaimsFromToken(r))
+
+	// Get current object layer instance.
+	objectAPI := newObjectLayerWithoutSafeModeFn()
+	if objectAPI == nil || globalNotificationSys == nil || globalIAMSys == nil {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL)
+		return
+	}
+
+	cred, _, owner, s3Err := validateAdminSignature(ctx, r, "")
+	if s3Err != ErrNone {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(s3Err), r.URL)
+		return
+	}
+
+	buckets, err := objectAPI.ListBuckets(ctx)
+	if err != nil {
+		// writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrInternalError), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+		return
+	}
+
+	accountName := cred.AccessKey
+	if cred.ParentUser != "" {
+		accountName = cred.AccessKey
+	}
+
+	// Load the latest calculated data usage
+	dataUsageInfo, err := loadDataUsageFromBackend(ctx, objectAPI)
+	if err != nil {
+		logger.LogIf(ctx, err)
+	}
+
+	acctInfo := madmin.AccountUsageInfo{
+		AccountName: accountName,
+	}
+
+	for _, bucket := range buckets {
+		if owner {
+			var size uint64
+			// Fetch the data usage of the current bucket
+			if !dataUsageInfo.LastUpdate.IsZero() && len(dataUsageInfo.BucketsSizes) > 0 {
+				size = dataUsageInfo.BucketsSizes[bucket.Name]
+			}
+
+			acctInfo.Buckets = append(acctInfo.Buckets, madmin.BucketUsageInfo{
+				Created: bucket.Created,
+				Size:    size,
+				Access: madmin.AccountAccess{
+					Read:   true,
+					Write:  true,
+					Custom: true,
+				},
+			})
+			continue
+		}
+		rd, wr, custom := globalIAMSys.GetAccountAccess(accountName, bucket.Name)
+		if rd || wr || custom {
+			var size uint64
+			// Fetch the data usage of the current bucket
+			if !dataUsageInfo.LastUpdate.IsZero() && len(dataUsageInfo.BucketsSizes) > 0 {
+				size = dataUsageInfo.BucketsSizes[bucket.Name]
+			}
+
+			acctInfo.Buckets = append(acctInfo.Buckets, madmin.BucketUsageInfo{
+				Created: bucket.Created,
+				Size:    size,
+				Access: madmin.AccountAccess{
+					Read:   rd,
+					Write:  wr,
+					Custom: custom,
+				},
+			})
+		}
+	}
+
+	usageInfoJSON, err := json.Marshal(acctInfo)
+	if err != nil {
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+		return
+	}
+
+	writeSuccessResponseJSON(w, usageInfoJSON)
+}
+
 func newLockEntry(l lockRequesterInfo, resource, server string) *madmin.LockEntry {
 	entry := &madmin.LockEntry{
 		Timestamp:  l.Timestamp,

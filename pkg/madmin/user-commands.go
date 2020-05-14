@@ -31,14 +31,14 @@ import (
 
 // AccountAccess contains information about
 type AccountAccess struct {
-	Read  bool `json:"read"`
-	Write bool `json:"write"`
+	Read   bool `json:"read"`
+	Write  bool `json:"write"`
+	Custom bool `json:"custom"`
 }
 
 // BucketUsageInfo represents bucket usage of a bucket, and its relevant
 // access type for an account
 type BucketUsageInfo struct {
-	Name    string        `json:"name"`
 	Size    uint64        `json:"size"`
 	Created time.Time     `json:"created"`
 	Access  AccountAccess `json:"access"`
